@@ -23,6 +23,7 @@ export interface Post {
     comment_count: number,
     created_at: number,
     updated_at: number,
+    creator_handle?: string,
 }
 
 export function usePost() {
@@ -82,7 +83,6 @@ export function usePost() {
                     creator: wallet.publicKey,
                     post: postPda,
                     profile: profilePda,
-                    // system_program: SystemProgram.programId,
                 })
                 .rpc();
 
@@ -158,7 +158,34 @@ export function usePost() {
         try {
             const allPostsResponse = await program.account.post.all();
 
-            setAllPosts(allPostsResponse as unknown as any);
+            // Fetch profile data for each post creator
+        const postsWithHandles = await Promise.all(
+            allPostsResponse.map(async (post: any) => {
+                try {
+                    // Derive profile PDA for the creator
+                    const creatorProfilePda = PublicKey.findProgramAddressSync([
+                        Buffer.from("profile"),
+                        post.account.creator.toBuffer()
+                    ], PROGRAM_ID)[0];
+                    
+                    // Fetch the profile
+                    const profileAccount = await program.account.userProfile.fetch(creatorProfilePda);
+                    
+                    return {
+                        ...post,
+                        creatorHandle: profileAccount.handle
+                    };
+                } catch (err) {
+                    // If profile doesn't exist, use fallback
+                    return {
+                        ...post,
+                        creatorHandle: `User ${post.account.creator.toString().slice(0, 8)}...`
+                    };
+                }
+            })
+        );
+
+        setAllPosts(postsWithHandles as unknown as any);
         } catch (err: any) {
             console.error("Error fetching posts:", err);
         }

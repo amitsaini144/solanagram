@@ -43,4 +43,8 @@ pub mod solana_instagram {
         follow_user(ctx)
     }
 
+    pub fn unfollow_user_profile(ctx: Context<UnfollowUser>) -> Result<()> {
+        unfollow_user(ctx)
+    }
+
 }

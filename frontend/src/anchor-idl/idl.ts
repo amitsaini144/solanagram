@@ -312,6 +312,63 @@ export type SolanaInstagram = {
       ]
     },
     {
+      "name": "unfollowUserProfile",
+      "discriminator": [
+        42,
+        193,
+        95,
+        142,
+        226,
+        144,
+        42,
+        125
+      ],
+      "accounts": [
+        {
+          "name": "follower",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "follow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  111,
+                  108,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "follower"
+              },
+              {
+                "kind": "account",
+                "path": "following_profile.authority",
+                "account": "userProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "followerProfile",
+          "writable": true
+        },
+        {
+          "name": "followingProfile",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "updateUserProfile",
       "discriminator": [
         79,

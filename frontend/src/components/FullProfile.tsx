@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useUserProfile } from "@/components/hooks/useUserProfile";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { UploadButton } from "@/utils/uploadthing";
 import { EditProfileDialog } from "@/components/EditProfileDialog";
@@ -109,6 +110,14 @@ export function FullProfile() {
                             />
                         </div>
                         <p className="text-lg text-muted-foreground mb-2">{profile.bio}</p>
+                        <div className="flex space-x-2 my-1">
+                            <Badge variant="secondary" className="text-sm">
+                                {profile.followerCount} followers
+                            </Badge>
+                            <Badge variant="secondary" className="text-sm">
+                                {profile.followingCount} following
+                            </Badge>
+                        </div>
                         <div className="flex space-x-6 text-sm text-muted-foreground">
                             <span><strong>Member since:</strong> {new Date(profile.createdAt * 1000).toLocaleDateString()}</span>
                             <span><strong>Last updated:</strong> {new Date(profile.updatedAt * 1000).toLocaleDateString()}</span>

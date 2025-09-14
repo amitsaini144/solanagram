@@ -73,8 +73,6 @@ export function CreateProfile() {
         .initialize(handle, bio, avatarUri)
         .accounts({
           user: wallet.publicKey,
-          // profile: profilePda,
-          // systemProgram: SystemProgram.programId,
         })
         .rpc()
 

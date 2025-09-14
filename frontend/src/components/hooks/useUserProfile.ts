@@ -13,6 +13,8 @@ export interface UserProfile {
   avatarUri: string;
   createdAt: number;
   updatedAt: number;
+  followerCount: number;
+  followingCount: number;
 }
 
 export function useUserProfile() {
@@ -84,6 +86,8 @@ export function useUserProfile() {
         authority: profileAccount.authority,
         handle: profileAccount.handle,
         bio: profileAccount.bio,
+        followerCount: profileAccount.followerCount.toNumber(),
+        followingCount: profileAccount.followingCount.toNumber(),
         avatarUri: profileAccount.avatarUri,
         createdAt: profileAccount.createdAt.toNumber(),
         updatedAt: profileAccount.updatedAt.toNumber(),

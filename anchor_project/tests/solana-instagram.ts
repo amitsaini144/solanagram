@@ -2316,7 +2316,7 @@ describe("Follow User", () => {
   });
 });
 
-describe.only("Fetch Profile Posts", () => {
+describe("Fetch Profile Posts", () => {
   let user: anchor.web3.Keypair;
   let userProfilePda: anchor.web3.PublicKey;
   let postPda1: anchor.web3.PublicKey;
@@ -2824,5 +2824,1196 @@ describe("Fetch All Posts Across All Users", () => {
     // Note: The order depends on the blockchain's natural ordering
     // We can't guarantee specific order without additional sorting
     // but we can verify both posts are present
+  });
+});
+
+// ========================================
+// COMPREHENSIVE COMMENT TESTS
+// ========================================
+
+describe("Comprehensive Comment Tests", () => {
+  let user: anchor.web3.Keypair;
+  let userProfilePda: anchor.web3.PublicKey;
+  let postPda: anchor.web3.PublicKey;
+
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+
+  const program = anchor.workspace.solanaInstagram as Program<SolanaInstagram>;
+
+  function pda(seeds: (Buffer | Uint8Array)[]) {
+    return anchor.web3.PublicKey.findProgramAddressSync(seeds, program.programId);
+  }
+
+  async function airdrop(connection: any, address: any, amount = 1000000000) {
+    await connection.confirmTransaction(await connection.requestAirdrop(address, amount), "confirmed");
+  }
+
+  function generateString(length: number, char = "a"): string {
+    return char.repeat(length);
+  }
+
+  beforeEach(async () => {
+    user = anchor.web3.Keypair.generate();
+    await airdrop(provider.connection, user.publicKey);
+    [userProfilePda] = pda([Buffer.from("profile"), user.publicKey.toBuffer()]);
+
+    // Create profile first
+    await program.methods
+      .initialize("commentuser", "User who comments", "https://commentuser.com/avatar.png")
+      .accounts({
+        user: user.publicKey
+      })
+      .signers([user])
+      .rpc();
+
+    // Create a post to comment on
+    const mediaUri = "https://example.com/post.jpg";
+    const content = "Original post content";
+    [postPda] = pda([
+      Buffer.from("post"),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(mediaUri, 'utf8')).digest().slice(0, 4),
+      userProfilePda.toBuffer()
+    ]);
+
+    await program.methods
+      .createPost(mediaUri, content)
+      .accounts({
+        creator: user.publicKey,
+        post: postPda,
+        profile: userProfilePda
+      })
+      .signers([user])
+      .rpc();
+  });
+
+  // HAPPY PATH TESTS
+  it("Should create multiple comments on same post", async () => {
+    const comment1 = "First comment";
+    const comment2 = "Second comment";
+    const comment3 = "Third comment";
+
+    const [commentPda1] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(comment1, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    const [commentPda2] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(comment2, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    const [commentPda3] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(comment3, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    // Create all three comments
+    await program.methods
+      .createComment(comment1)
+      .accounts({
+        commenter: user.publicKey,
+        comment: commentPda1,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    await program.methods
+      .createComment(comment2)
+      .accounts({
+        commenter: user.publicKey,
+        comment: commentPda2,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    await program.methods
+      .createComment(comment3)
+      .accounts({
+        commenter: user.publicKey,
+        comment: commentPda3,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    // Verify all comments exist
+    const comment1Data = await program.account.comment.fetch(commentPda1);
+    const comment2Data = await program.account.comment.fetch(commentPda2);
+    const comment3Data = await program.account.comment.fetch(commentPda3);
+
+    expect(comment1Data.content).to.equal(comment1);
+    expect(comment2Data.content).to.equal(comment2);
+    expect(comment3Data.content).to.equal(comment3);
+
+    // Verify post comment count is updated
+    const updatedPost = await program.account.post.fetch(postPda);
+    expect(updatedPost.commentCount.toNumber()).to.equal(3);
+  });
+
+  it("Should create comments with special characters and emojis", async () => {
+    const specialComment = "Comment with special chars: !@#$%^&*()_+-=[]{}|;':\",./<>? and emojis 🚀🎉💯";
+    const [commentPda] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(specialComment, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    await program.methods
+      .createComment(specialComment)
+      .accounts({
+        commenter: user.publicKey,
+        comment: commentPda,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    const comment = await program.account.comment.fetch(commentPda);
+    expect(comment.content).to.equal(specialComment);
+  });
+
+  it("Should create comments with different users on same post", async () => {
+    const user2 = anchor.web3.Keypair.generate();
+    await airdrop(provider.connection, user2.publicKey);
+    const [user2ProfilePda] = pda([Buffer.from("profile"), user2.publicKey.toBuffer()]);
+
+    await program.methods
+      .initialize("user2", "Second user", "https://user2.com/avatar.png")
+      .accounts({
+        user: user2.publicKey
+      })
+      .signers([user2])
+      .rpc();
+
+    const comment1 = "Comment from user1";
+    const comment2 = "Comment from user2";
+
+    const [commentPda1] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(comment1, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    const [commentPda2] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user2.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(comment2, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    await program.methods
+      .createComment(comment1)
+      .accounts({
+        commenter: user.publicKey,
+        comment: commentPda1,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    await program.methods
+      .createComment(comment2)
+      .accounts({
+        commenter: user2.publicKey,
+        comment: commentPda2,
+        post: postPda
+      })
+      .signers([user2])
+      .rpc();
+
+    const comment1Data = await program.account.comment.fetch(commentPda1);
+    const comment2Data = await program.account.comment.fetch(commentPda2);
+
+    expect(comment1Data.commentBy.toBase58()).to.equal(user.publicKey.toBase58());
+    expect(comment2Data.commentBy.toBase58()).to.equal(user2.publicKey.toBase58());
+    expect(comment1Data.content).to.equal(comment1);
+    expect(comment2Data.content).to.equal(comment2);
+  });
+
+  // UNHAPPY PATH TESTS
+  it("Should fail when trying to comment on non-existent post", async () => {
+    const nonExistentPost = anchor.web3.Keypair.generate();
+    const commentContent = "Comment on non-existent post";
+    const [commentPda] = pda([
+      Buffer.from("comment"),
+      nonExistentPost.publicKey.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(commentContent, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    try {
+      await program.methods
+        .createComment(commentContent)
+        .accounts({
+          commenter: user.publicKey,
+          comment: commentPda,
+          post: nonExistentPost.publicKey
+        })
+        .signers([user])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should fail when unauthorized user tries to comment", async () => {
+    const unauthorizedUser = anchor.web3.Keypair.generate();
+    await airdrop(provider.connection, unauthorizedUser.publicKey);
+
+    const commentContent = "Unauthorized comment";
+    const [commentPda] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      unauthorizedUser.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(commentContent, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    try {
+      await program.methods
+        .createComment(commentContent)
+        .accounts({
+          commenter: unauthorizedUser.publicKey,
+          comment: commentPda,
+          post: postPda
+        })
+        .signers([unauthorizedUser])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should fail when trying to create duplicate comment", async () => {
+    const commentContent = "Duplicate comment";
+    const [commentPda] = pda([
+      Buffer.from("comment"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(commentContent, 'utf8')).digest().slice(0, 4)
+    ]);
+
+    // Create first comment
+    await program.methods
+      .createComment(commentContent)
+      .accounts({
+        commenter: user.publicKey,
+        comment: commentPda,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    // Try to create same comment again
+    try {
+      await program.methods
+        .createComment(commentContent)
+        .accounts({
+          commenter: user.publicKey,
+          comment: commentPda,
+          post: postPda
+        })
+        .signers([user])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+});
+
+// ========================================
+// COMPREHENSIVE REACTION TESTS
+// ========================================
+
+describe("Comprehensive Reaction Tests", () => {
+  let user: anchor.web3.Keypair;
+  let userProfilePda: anchor.web3.PublicKey;
+  let postPda: anchor.web3.PublicKey;
+
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+
+  const program = anchor.workspace.solanaInstagram as Program<SolanaInstagram>;
+
+  function pda(seeds: (Buffer | Uint8Array)[]) {
+    return anchor.web3.PublicKey.findProgramAddressSync(seeds, program.programId);
+  }
+
+  async function airdrop(connection: any, address: any, amount = 1000000000) {
+    await connection.confirmTransaction(await connection.requestAirdrop(address, amount), "confirmed");
+  }
+
+  beforeEach(async () => {
+    user = anchor.web3.Keypair.generate();
+    await airdrop(provider.connection, user.publicKey);
+    [userProfilePda] = pda([Buffer.from("profile"), user.publicKey.toBuffer()]);
+
+    // Create profile first
+    await program.methods
+      .initialize("reactionuser", "User who reacts", "https://reactionuser.com/avatar.png")
+      .accounts({
+        user: user.publicKey
+      })
+      .signers([user])
+      .rpc();
+
+    // Create a post to react to
+    const mediaUri = "https://example.com/reactionpost.jpg";
+    const content = "Post for reactions";
+    [postPda] = pda([
+      Buffer.from("post"),
+      user.publicKey.toBuffer(),
+      crypto.createHash('sha256').update(Buffer.from(mediaUri, 'utf8')).digest().slice(0, 4),
+      userProfilePda.toBuffer()
+    ]);
+
+    await program.methods
+      .createPost(mediaUri, content)
+      .accounts({
+        creator: user.publicKey,
+        post: postPda,
+        profile: userProfilePda
+      })
+      .signers([user])
+      .rpc();
+  });
+
+  // HAPPY PATH TESTS
+  it("Should create all reaction types successfully", async () => {
+    const reactionTypes = [
+      { like: {} },
+      { dislike: {} },
+      { love: {} },
+      { haha: {} },
+      { wow: {} },
+      { sad: {} },
+      { angry: {} }
+    ];
+
+    for (let i = 0; i < reactionTypes.length; i++) {
+      const userForReaction = anchor.web3.Keypair.generate();
+      await airdrop(provider.connection, userForReaction.publicKey);
+
+      const [reactionPda] = pda([
+        Buffer.from("reaction"),
+        postPda.toBuffer(),
+        userForReaction.publicKey.toBuffer()
+      ]);
+
+      await program.methods
+        .createReaction(reactionTypes[i])
+        .accounts({
+          reactioner: userForReaction.publicKey,
+          post: postPda
+        })
+        .signers([userForReaction])
+        .rpc();
+
+      const reaction = await program.account.reaction.fetch(reactionPda);
+      expect(reaction.reactionType).to.deep.equal(reactionTypes[i]);
+    }
+  });
+
+  it("Should increment correct reaction counts for all types", async () => {
+    const user1 = anchor.web3.Keypair.generate();
+    const user2 = anchor.web3.Keypair.generate();
+    const user3 = anchor.web3.Keypair.generate();
+    const user4 = anchor.web3.Keypair.generate();
+    const user5 = anchor.web3.Keypair.generate();
+    const user6 = anchor.web3.Keypair.generate();
+    const user7 = anchor.web3.Keypair.generate();
+
+    await airdrop(provider.connection, user1.publicKey);
+    await airdrop(provider.connection, user2.publicKey);
+    await airdrop(provider.connection, user3.publicKey);
+    await airdrop(provider.connection, user4.publicKey);
+    await airdrop(provider.connection, user5.publicKey);
+    await airdrop(provider.connection, user6.publicKey);
+    await airdrop(provider.connection, user7.publicKey);
+
+    // Create different reaction types
+    const reactions = [
+      { user: user1, type: { like: {} } },
+      { user: user2, type: { dislike: {} } },
+      { user: user3, type: { love: {} } },
+      { user: user4, type: { haha: {} } },
+      { user: user5, type: { wow: {} } },
+      { user: user6, type: { sad: {} } },
+      { user: user7, type: { angry: {} } }
+    ];
+
+    for (const reaction of reactions) {
+      const [reactionPda] = pda([
+        Buffer.from("reaction"),
+        postPda.toBuffer(),
+        reaction.user.publicKey.toBuffer()
+      ]);
+
+      await program.methods
+        .createReaction(reaction.type)
+        .accounts({
+          reactioner: reaction.user.publicKey,
+          post: postPda
+        })
+        .signers([reaction.user])
+        .rpc();
+    }
+
+    const updatedPost = await program.account.post.fetch(postPda);
+    expect(updatedPost.likeCount.toNumber()).to.equal(1);
+    expect(updatedPost.dislikeCount.toNumber()).to.equal(1);
+    expect(updatedPost.loveCount.toNumber()).to.equal(1);
+    expect(updatedPost.hahaCount.toNumber()).to.equal(1);
+    expect(updatedPost.wowCount.toNumber()).to.equal(1);
+    expect(updatedPost.sadCount.toNumber()).to.equal(1);
+    expect(updatedPost.angryCount.toNumber()).to.equal(1);
+  });
+
+  it("Should allow multiple users to react to same post", async () => {
+    const user1 = anchor.web3.Keypair.generate();
+    const user2 = anchor.web3.Keypair.generate();
+    const user3 = anchor.web3.Keypair.generate();
+
+    await airdrop(provider.connection, user1.publicKey);
+    await airdrop(provider.connection, user2.publicKey);
+    await airdrop(provider.connection, user3.publicKey);
+
+    const [reactionPda1] = pda([
+      Buffer.from("reaction"),
+      postPda.toBuffer(),
+      user1.publicKey.toBuffer()
+    ]);
+
+    const [reactionPda2] = pda([
+      Buffer.from("reaction"),
+      postPda.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    const [reactionPda3] = pda([
+      Buffer.from("reaction"),
+      postPda.toBuffer(),
+      user3.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .createReaction({ like: {} })
+      .accounts({
+        reactioner: user1.publicKey,
+        post: postPda
+      })
+      .signers([user1])
+      .rpc();
+
+    await program.methods
+      .createReaction({ like: {} })
+      .accounts({
+        reactioner: user2.publicKey,
+        post: postPda
+      })
+      .signers([user2])
+      .rpc();
+
+    await program.methods
+      .createReaction({ like: {} })
+      .accounts({
+        reactioner: user3.publicKey,
+        post: postPda
+      })
+      .signers([user3])
+      .rpc();
+
+    const reaction1 = await program.account.reaction.fetch(reactionPda1);
+    const reaction2 = await program.account.reaction.fetch(reactionPda2);
+    const reaction3 = await program.account.reaction.fetch(reactionPda3);
+
+    expect(reaction1.reactionBy.toBase58()).to.equal(user1.publicKey.toBase58());
+    expect(reaction2.reactionBy.toBase58()).to.equal(user2.publicKey.toBase58());
+    expect(reaction3.reactionBy.toBase58()).to.equal(user3.publicKey.toBase58());
+
+    const updatedPost = await program.account.post.fetch(postPda);
+    expect(updatedPost.likeCount.toNumber()).to.equal(3);
+  });
+
+  // UNHAPPY PATH TESTS
+  it("Should fail when trying to react to non-existent post", async () => {
+    const nonExistentPost = anchor.web3.Keypair.generate();
+    const [reactionPda] = pda([
+      Buffer.from("reaction"),
+      nonExistentPost.publicKey.toBuffer(),
+      user.publicKey.toBuffer()
+    ]);
+
+    try {
+      await program.methods
+        .createReaction({ like: {} })
+        .accounts({
+          reactioner: user.publicKey,
+          post: nonExistentPost.publicKey
+        })
+        .signers([user])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should fail when unauthorized user tries to react", async () => {
+    const unauthorizedUser = anchor.web3.Keypair.generate();
+    await airdrop(provider.connection, unauthorizedUser.publicKey);
+
+    const [reactionPda] = pda([
+      Buffer.from("reaction"),
+      postPda.toBuffer(),
+      unauthorizedUser.publicKey.toBuffer()
+    ]);
+
+    try {
+      await program.methods
+        .createReaction({ like: {} })
+        .accounts({
+          reactioner: unauthorizedUser.publicKey,
+          post: postPda
+        })
+        .signers([unauthorizedUser])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should fail when trying to create duplicate reaction from same user", async () => {
+    const [reactionPda] = pda([
+      Buffer.from("reaction"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer()
+    ]);
+
+    // Create first reaction
+    await program.methods
+      .createReaction({ like: {} })
+      .accounts({
+        reactioner: user.publicKey,
+        post: postPda
+      })
+      .signers([user])
+      .rpc();
+
+    // Try to create same reaction again
+    try {
+      await program.methods
+        .createReaction({ like: {} })
+        .accounts({
+          reactioner: user.publicKey,
+          post: postPda
+        })
+        .signers([user])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should fail with invalid reaction type", async () => {
+    const [reactionPda] = pda([
+      Buffer.from("reaction"),
+      postPda.toBuffer(),
+      user.publicKey.toBuffer()
+    ]);
+
+    try {
+      // This should fail as it's not a valid reaction type
+      await program.methods
+        .createReaction({ invalid: {} } as any)
+        .accounts({
+          reactioner: user.publicKey,
+          post: postPda
+        })
+        .signers([user])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+});
+
+// ========================================
+// COMPREHENSIVE FOLLOW USER TESTS
+// ========================================
+
+describe("Comprehensive Follow User Tests", () => {
+  let user1: anchor.web3.Keypair;
+  let user2: anchor.web3.Keypair;
+  let user3: anchor.web3.Keypair;
+  let user1ProfilePda: anchor.web3.PublicKey;
+  let user2ProfilePda: anchor.web3.PublicKey;
+  let user3ProfilePda: anchor.web3.PublicKey;
+
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+
+  const program = anchor.workspace.solanaInstagram as Program<SolanaInstagram>;
+
+  function pda(seeds: (Buffer | Uint8Array)[]) {
+    return anchor.web3.PublicKey.findProgramAddressSync(seeds, program.programId);
+  }
+
+  async function airdrop(connection: any, address: any, amount = 1000000000) {
+    await connection.confirmTransaction(await connection.requestAirdrop(address, amount), "confirmed");
+  }
+
+  beforeEach(async () => {
+    user1 = anchor.web3.Keypair.generate();
+    user2 = anchor.web3.Keypair.generate();
+    user3 = anchor.web3.Keypair.generate();
+    
+    await airdrop(provider.connection, user1.publicKey);
+    await airdrop(provider.connection, user2.publicKey);
+    await airdrop(provider.connection, user3.publicKey);
+    
+    [user1ProfilePda] = pda([Buffer.from("profile"), user1.publicKey.toBuffer()]);
+    [user2ProfilePda] = pda([Buffer.from("profile"), user2.publicKey.toBuffer()]);
+    [user3ProfilePda] = pda([Buffer.from("profile"), user3.publicKey.toBuffer()]);
+
+    // Create profiles for all users
+    await program.methods
+      .initialize("user1", "First user", "https://user1.com/avatar.png")
+      .accounts({
+        user: user1.publicKey
+      })
+      .signers([user1])
+      .rpc();
+
+    await program.methods
+      .initialize("user2", "Second user", "https://user2.com/avatar.png")
+      .accounts({
+        user: user2.publicKey
+      })
+      .signers([user2])
+      .rpc();
+
+    await program.methods
+      .initialize("user3", "Third user", "https://user3.com/avatar.png")
+      .accounts({
+        user: user3.publicKey
+      })
+      .signers([user3])
+      .rpc();
+  });
+
+  // HAPPY PATH TESTS
+  it("Should create multiple follow relationships", async () => {
+    // User1 follows User2
+    const [followPda1] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // User1 follows User3
+    const [followPda2] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user3.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user3ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // User2 follows User3
+    const [followPda3] = pda([
+      Buffer.from("follow"),
+      user2.publicKey.toBuffer(),
+      user3.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user2.publicKey,
+        followerProfile: user2ProfilePda,
+        followingProfile: user3ProfilePda
+      })
+      .signers([user2])
+      .rpc();
+
+    // Verify all follow relationships exist
+    const follow1 = await program.account.follow.fetch(followPda1);
+    const follow2 = await program.account.follow.fetch(followPda2);
+    const follow3 = await program.account.follow.fetch(followPda3);
+
+    expect(follow1.follower.toBase58()).to.equal(user1.publicKey.toBase58());
+    expect(follow1.following.toBase58()).to.equal(user2.publicKey.toBase58());
+    expect(follow2.follower.toBase58()).to.equal(user1.publicKey.toBase58());
+    expect(follow2.following.toBase58()).to.equal(user3.publicKey.toBase58());
+    expect(follow3.follower.toBase58()).to.equal(user2.publicKey.toBase58());
+    expect(follow3.following.toBase58()).to.equal(user3.publicKey.toBase58());
+
+    // Verify follower counts are correct
+    const user1Profile = await program.account.userProfile.fetch(user1ProfilePda);
+    const user2Profile = await program.account.userProfile.fetch(user2ProfilePda);
+    const user3Profile = await program.account.userProfile.fetch(user3ProfilePda);
+
+    expect(user1Profile.followingCount.toNumber()).to.equal(2);
+    expect(user1Profile.followerCount.toNumber()).to.equal(0);
+    expect(user2Profile.followingCount.toNumber()).to.equal(1);
+    expect(user2Profile.followerCount.toNumber()).to.equal(1);
+    expect(user3Profile.followingCount.toNumber()).to.equal(0);
+    expect(user3Profile.followerCount.toNumber()).to.equal(2);
+  });
+
+  it("Should allow bidirectional following", async () => {
+    // User1 follows User2
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // User2 follows User1 back
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user2.publicKey,
+        followerProfile: user2ProfilePda,
+        followingProfile: user1ProfilePda
+      })
+      .signers([user2])
+      .rpc();
+
+    const user1Profile = await program.account.userProfile.fetch(user1ProfilePda);
+    const user2Profile = await program.account.userProfile.fetch(user2ProfilePda);
+
+    expect(user1Profile.followingCount.toNumber()).to.equal(1);
+    expect(user1Profile.followerCount.toNumber()).to.equal(1);
+    expect(user2Profile.followingCount.toNumber()).to.equal(1);
+    expect(user2Profile.followerCount.toNumber()).to.equal(1);
+  });
+
+  it("Should create follow relationship with correct timestamps", async () => {
+    const beforeTime = Math.floor(Date.now() / 1000) - 10;
+
+    const [followPda] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    const afterTime = Math.floor(Date.now() / 1000);
+
+    const follow = await program.account.follow.fetch(followPda);
+    const createdAt = follow.createdAt.toNumber();
+    const updatedAt = follow.updatedAt.toNumber();
+
+    expect(createdAt).to.be.greaterThanOrEqual(beforeTime);
+    expect(createdAt).to.be.lessThanOrEqual(afterTime);
+    expect(createdAt).to.equal(updatedAt);
+  });
+
+  // UNHAPPY PATH TESTS
+  it("Should fail when user tries to follow themselves", async () => {
+    try {
+      await program.methods
+        .followUserProfile()
+        .accounts({
+          follower: user1.publicKey,
+          followerProfile: user1ProfilePda,
+          followingProfile: user1ProfilePda
+        })
+        .signers([user1])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error.error.errorCode.code).to.equal("CannotFollowSelf");
+      expect(error.error.errorCode.number).to.equal(6011);
+    }
+  });
+
+  it("Should fail when trying to follow non-existent profile", async () => {
+    const nonExistentProfile = anchor.web3.Keypair.generate();
+    const [followPda] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      nonExistentProfile.publicKey.toBuffer()
+    ]);
+
+    try {
+      await program.methods
+        .followUserProfile()
+        .accounts({
+          follower: user1.publicKey,
+          followerProfile: user1ProfilePda,
+          followingProfile: nonExistentProfile.publicKey
+        })
+        .signers([user1])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should fail when unauthorized user tries to modify follower profile", async () => {
+    try {
+      await program.methods
+        .followUserProfile()
+        .accounts({
+          follower: user1.publicKey,
+          followerProfile: user2ProfilePda, // Wrong profile - should be user1's profile
+          followingProfile: user2ProfilePda
+        })
+        .signers([user1])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error.error.errorCode.code).to.equal("ConstraintRaw");
+      expect(error.error.errorCode.number).to.equal(2003);
+    }
+  });
+
+  it("Should fail when trying to follow with wrong PDA", async () => {
+    const [wrongPda] = pda([
+      Buffer.from("wrong_seed"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    try {
+      await program.methods
+        .followUserProfile()
+        .accounts({
+          follower: user1.publicKey,
+          follow: wrongPda,
+          followerProfile: user1ProfilePda,
+          followingProfile: user2ProfilePda
+        })
+        .signers([user1])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error.error.errorCode.code).to.equal("ConstraintSeeds");
+      expect(error.error.errorCode.number).to.equal(2006);
+    }
+  });
+
+  it("Should fail when trying to follow same user twice", async () => {
+    // First follow should succeed
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // Second follow should fail
+    try {
+      await program.methods
+        .followUserProfile()
+        .accounts({
+          follower: user1.publicKey,
+          followerProfile: user1ProfilePda,
+          followingProfile: user2ProfilePda
+        })
+        .signers([user1])
+        .rpc();
+
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+});
+
+// ========================================
+// COMPREHENSIVE UNFOLLOW USER TESTS
+// ========================================
+
+describe.only("Comprehensive Unfollow User Tests", () => {
+  let user1: anchor.web3.Keypair;
+  let user2: anchor.web3.Keypair;
+  let user3: anchor.web3.Keypair;
+  let user1ProfilePda: anchor.web3.PublicKey;
+  let user2ProfilePda: anchor.web3.PublicKey;
+  let user3ProfilePda: anchor.web3.PublicKey;
+
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+
+  const program = anchor.workspace.solanaInstagram as Program<SolanaInstagram>;
+
+  function pda(seeds: (Buffer | Uint8Array)[]) {
+    return anchor.web3.PublicKey.findProgramAddressSync(seeds, program.programId);
+  }
+
+  async function airdrop(connection: any, address: any, amount = 1000000000) {
+    await connection.confirmTransaction(await connection.requestAirdrop(address, amount), "confirmed");
+  }
+
+  beforeEach(async () => {
+    user1 = anchor.web3.Keypair.generate();
+    user2 = anchor.web3.Keypair.generate();
+    user3 = anchor.web3.Keypair.generate();
+    
+    await airdrop(provider.connection, user1.publicKey);
+    await airdrop(provider.connection, user2.publicKey);
+    await airdrop(provider.connection, user3.publicKey);
+    
+    [user1ProfilePda] = pda([Buffer.from("profile"), user1.publicKey.toBuffer()]);
+    [user2ProfilePda] = pda([Buffer.from("profile"), user2.publicKey.toBuffer()]);
+    [user3ProfilePda] = pda([Buffer.from("profile"), user3.publicKey.toBuffer()]);
+
+    // Create profiles for all users
+    await program.methods
+      .initialize("user1", "First user", "https://user1.com/avatar.png")
+      .accounts({
+        user: user1.publicKey
+      })
+      .signers([user1])
+      .rpc();
+
+    await program.methods
+      .initialize("user2", "Second user", "https://user2.com/avatar.png")
+      .accounts({
+        user: user2.publicKey
+      })
+      .signers([user2])
+      .rpc();
+
+    await program.methods
+      .initialize("user3", "Third user", "https://user3.com/avatar.png")
+      .accounts({
+        user: user3.publicKey
+      })
+      .signers([user3])
+      .rpc();
+  });
+
+  // HAPPY PATH TESTS
+  it("Should unfollow user successfully", async () => {
+    // First create follow relationship
+    const [followPda] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // Verify follow exists
+    const followBefore = await program.account.follow.fetch(followPda);
+    expect(followBefore.follower.toBase58()).to.equal(user1.publicKey.toBase58());
+
+    // Now unfollow
+    await program.methods
+      .unfollowUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        // follow: followPda,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // Verify follow account is closed
+    try {
+      await program.account.follow.fetch(followPda);
+      expect.fail("Follow account should have been closed");
+    } catch (error) {
+      expect(error).to.exist;
+    }
+  });
+
+  it("Should update follower counts correctly when unfollowing", async () => {
+    // Create follow relationship
+    const [followPda] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // Get counts before unfollow
+    const user1ProfileBefore = await program.account.userProfile.fetch(user1ProfilePda);
+    const user2ProfileBefore = await program.account.userProfile.fetch(user2ProfilePda);
+
+    // Unfollow
+    await program.methods
+      .unfollowUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        // follow: followPda,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    // Get counts after unfollow
+    const user1ProfileAfter = await program.account.userProfile.fetch(user1ProfilePda);
+    const user2ProfileAfter = await program.account.userProfile.fetch(user2ProfilePda);
+
+    expect(user1ProfileAfter.followingCount.toNumber()).to.equal(user1ProfileBefore.followingCount.toNumber() - 1);
+    expect(user2ProfileAfter.followerCount.toNumber()).to.equal(user2ProfileBefore.followerCount.toNumber() - 1);
+  });
+
+  it("Should update profile timestamps when unfollowing", async () => {
+    // Create follow relationship
+    const [followPda] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    const user1ProfileBefore = await program.account.userProfile.fetch(user1ProfilePda);
+    const user2ProfileBefore = await program.account.userProfile.fetch(user2ProfilePda);
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Unfollow
+    await program.methods
+      .unfollowUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        // follow: followPda,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    const user1ProfileAfter = await program.account.userProfile.fetch(user1ProfilePda);
+    const user2ProfileAfter = await program.account.userProfile.fetch(user2ProfilePda);
+
+    expect(user1ProfileAfter.updatedAt.toNumber()).to.be.greaterThan(user1ProfileBefore.updatedAt.toNumber());
+    expect(user2ProfileAfter.updatedAt.toNumber()).to.be.greaterThan(user2ProfileBefore.updatedAt.toNumber());
+  });
+
+  it("Should refund SOL to follower when unfollowing", async () => {
+    // Create follow relationship
+    const [followPda] = pda([
+      Buffer.from("follow"),
+      user1.publicKey.toBuffer(),
+      user2.publicKey.toBuffer()
+    ]);
+
+    await program.methods
+      .followUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    const balanceBefore = await provider.connection.getBalance(user1.publicKey);
+
+    // Unfollow
+    await program.methods
+      .unfollowUserProfile()
+      .accounts({
+        follower: user1.publicKey,
+        // follow: followPda,
+        followerProfile: user1ProfilePda,
+        followingProfile: user2ProfilePda
+      })
+      .signers([user1])
+      .rpc();
+
+    const balanceAfter = await provider.connection.getBalance(user1.publicKey);
+
+    // Balance should increase (refund from closed account)
+    expect(balanceAfter).to.be.greaterThan(balanceBefore);
   });
 });
